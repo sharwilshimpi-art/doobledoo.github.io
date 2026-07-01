@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Citizen Portal & AQI Dashboard</title>
+    <!-- Leaflet CSS for the Map -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        :root {
+            --primary: #0a2540;
+            --secondary: #639fab;
+            --light: #f4f6f8;
+            --good: #009966;
+            --moderate: #ffde33;
+            --unhealthy: #cc0033;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--light);
+            color: #333;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 700px;
+            margin: 0 auto;
+        }
+        .card {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+            margin-bottom: 25px;
+        }
+        h1, h2 {
+            color: var(--primary);
+            margin-top: 0;
+            border-bottom: 2px solid var(--light);
+            padding-bottom: 10px;
+        }
+        /* AQI Widget Styling */
+        .aqi-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #f8fafc;
+            padding: 15px 20px;
+            border-radius: 8px;
+            border-left: 6px solid #ccc;
+        }
+        .aqi-badge {
+            font-size: 2.2em;
+            font-weight: bold;
+            color: white;
+            background-color: #666;
+            padding: 10px 20px;
+            border-radius: 8px;
+            text-align: center;
+            min-width: 70px;
+        }
+        .aqi-info h3 { margin: 0 0 5px 0; color: #1e293b; }
+        .aqi-info p { margin: 0; color: #64748b; font-size: 0.95em; }
+
+        /* Form Layout Details */
+        .form-group { margin-bottom: 20px; }
+        label { display: block; font-weight: 600; margin-bottom: 8px; color: var(--primary); }
+        input[type="text"], textarea, input[type="file"] {
+            width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box;
+        }
+        textarea { resize: vertical; height: 110px; }
+        #map { height: 260px; border-radius: 6px; border: 1px solid #ccc; margin-top: 5px; }
+        .coordinates-display {
+            font-size: 0.85em; color: #666; margin-top: 5px; background: #eef1f4; padding: 5px 10px; border-radius: 4px; display: inline-block;
+        }
+        button {
+            background-color: var(--primary); color: white; border: none; padding: 12px 24px; font-size: 16px; font-weight: bold; border-radius: 6px; cursor: pointer; width: 100%; transition: background 0.2s;
+        }
+        button:hover { background-color: #10355a; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    
+    <!-- LIVE AQI DASHBOARD COMPONENT -->
+    <div class="card">
+        <h2>Live Air Quality Dashboard</h2>
+        <div class="aqi-container" id="aqiBox">
+            <div class="aqi-info">
+                <h3 id="aqiCity">Loading Pune Air Quality...</h3>
+                <p id="aqiStatus">Fetching real-time open-source data...</p>
+                <p id="aqiStation" style="font-size: 0.8em; margin-top: 4px; font-style: italic;"></p>
+            </div>
+            <div class="aqi-badge" id="aqiValue">--</div>
+        </div>
+    </div>
+
+    <!-- MAIN COMPLAINT FORM -->
+    <div class="card">
+        <h1>Submit a Citizen Grievance</h1>
+        <p>Please provide details of the issue, select the location on the map, and attach photos if needed.</p>
+        
+        <form id="grievanceForm">
+            <div class="form-group">
+                <label for="title">Issue Title</label>
+                <input type="text" id="title" placeholder="e.g., Waste dumping on road, Water clogging" required>
+            </div>
+
+            <div class="form-group">
+                <label for="description">Detailed Description</label>
+                <textarea id="description" placeholder="Describe the grievance in detail..." required></textarea>
+            </div>
+
+            <div class="form-group">
+                <label>Location of the Incident</label>
+                <p style="font-size: 0.85em; color: #555; margin: 0 0 10px 0;">Click on the map to drop a pin.</p>
+                <div id="map"></div>
+                <div class="coordinates-display">
+                    Selected Location: <span id="coords">Lat: 18.5204, Lon: 73.8567</span>
+                </div>
+                <input type="hidden" id="lat" value="18.5204">
+                <input type="hidden" id="lng" value="73.8567">
+            </div>
+
+            <div class="form-group">
+                <label for="photo">Upload Photo (Optional)</label>
+                <input type="file" id="photo" accept="image/*">
+            </div>
+
+            <button type="submit">Submit Grievance</button>
+        </form>
+    </div>
+</div>
+
+<!-- Leaflet JS for Map functionality -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+    // ==========================================
+    // CONFIGURATION & LIVE AQI FETCHING
+    // ==========================================
+    // Paste your free token from aqicn.org inside the quotes below:
+    const WAQI_TOKEN = "93feb0892ff0e05f264c3cf9d32296f05a52940a"; 
+    const targetCity = "pune";
+
+    async function fetchAQI() {
+        if(WAQI_TOKEN === "YOUR_FREE_WAQI_TOKEN_HERE") {
+            document.getElementById('aqiCity').innerText = "API Token Needed";
+            document.getElementById('aqiStatus').innerText = "Please update the WAQI_TOKEN variable in index.html script.";
+            return;
+        }
+        try {
+            const response = await fetch(`https://api.waqi.info/feed/${targetCity}/?token=${WAQI_TOKEN}`);
+            const json = await response.json();
+            
+            if (json.status === "ok") {
+                const aqi = json.data.aqi;
+                const stationName = json.data.city.name;
+                
+                document.getElementById('aqiValue').innerText = aqi;
+                document.getElementById('aqiCity').innerText = `Pune City Air Quality`;
+                document.getElementById('aqiStation').innerText = `Station: ${stationName}`;
+                
+                // Color code and status message matching standard AQI indices
+                const box = document.getElementById('aqiBox');
+                const badge = document.getElementById('aqiValue');
+                
+                if (aqi <= 50) {
+                    badge.style.backgroundColor = "#009966";
+                    box.style.borderLeftColor = "#009966";
+                    document.getElementById('aqiStatus').innerText = "Good — Air quality is safe.";
+                } else if (aqi <= 100) {
+                    badge.style.backgroundColor = "#ffde33";
+                    badge.style.color = "#333";
+                    box.style.borderLeftColor = "#ffde33";
+                    document.getElementById('aqiStatus').innerText = "Moderate — Acceptable quality.";
+                } else if (aqi <= 150) {
+                    badge.style.backgroundColor = "#ff9933";
+                    box.style.borderLeftColor = "#ff9933";
+                    document.getElementById('aqiStatus').innerText = "Poor — Unhealthy for sensitive groups.";
+                } else {
+                    badge.style.backgroundColor = "#cc0033";
+                    box.style.borderLeftColor = "#cc0033";
+                    document.getElementById('aqiStatus').innerText = "Severe — Unhealthy air conditions.";
+                }
+            }
+        } catch (error) {
+            console.error("AQI Load Error:", error);
+            document.getElementById('aqiCity').innerText = "AQI Offline";
+        }
+    }
+
+    // Call AQI loader instantly on load
+    fetchAQI();
+
+    // ==========================================
+    // MAP SETUP (Adjusted defaults for Pune)
+    // ==========================================
+    const defaultLat = 18.5204;
+    const defaultLng = 73.8567;
+    
+    const map = L.map('map').setView([defaultLat, defaultLng], 12);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap'
+    }).addTo(map);
+
+    let marker = L.marker([defaultLat, defaultLng], {draggable: true}).addTo(map);
+
+    function updateLocation(lat, lng) {
+        document.getElementById('lat').value = lat.toFixed(6);
+        document.getElementById('lng').value = lng.toFixed(6);
+        document.getElementById('coords').textContent = `Lat: ${lat.toFixed(6)}, Lon: ${lng.toFixed(6)}`;
+    }
+
+    map.on('click', function(e) {
+        marker.setLatLng(e.latlng);
+        updateLocation(e.latlng.lat, e.latlng.lng);
+    });
+
+    marker.on('dragend', function(e) {
+        const position = marker.getLatLng();
+        updateLocation(position.lat, position.lng);
+    });
+
+    // ==========================================
+    // EXPRESS BACKEND FORM SUBMISSION HANDLER
+    // ==========================================
+    document.getElementById('grievanceForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const formData = new FormData();
+        formData.append('title', document.getElementById('title').value);
+        formData.append('description', document.getElementById('description').value);
+        formData.append('lat', document.getElementById('lat').value);
+        formData.append('lng', document.getElementById('lng').value);
+        
+        const photoFile = document.getElementById('photo').files[0];
+        if (photoFile) { formData.append('photo', photoFile); }
+
+        try {
+            const response = await fetch('/api/grievances', { method: 'POST', body: formData });
+            const result = await response.json();
+            if (result.success) {
+                alert("Success! Your grievance has been safely saved.");
+                this.reset();
+                marker.setLatLng([defaultLat, defaultLng]);
+                updateLocation(defaultLat, defaultLng);
+            } else {
+                alert("Error: " + result.message);
+            }
+        } catch (error) {
+            alert("Could not connect to server.js. Ensure backend is running.");
+        }
+    });
+</script>
+</body>
+</html>
